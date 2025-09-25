@@ -1,5 +1,10 @@
+// Removed incorrect import
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
+import 'dart:io';
 
 void main() {
   runApp(const MyApp());
@@ -57,23 +62,52 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final passwordController = TextEditingController();
-  late encrypt.Key key;
-  late encrypt.IV iv;
+  late encrypt.Key passwordKey;
+  late encrypt.IV passwordIv;
+  late encrypt.Key fileKey;
+  late encrypt.IV fileIv;
 
   void encryptPassword() {
     final string = passwordController.text;
-    key = encrypt.Key.fromSecureRandom(32);
-    iv = encrypt.IV.fromLength(16);
-    final encrypter = encrypt.Encrypter(encrypt.AES(key));
-    final encrypted = encrypter.encrypt(string, iv: iv);
+    passwordKey = encrypt.Key.fromSecureRandom(32);
+    passwordIv = encrypt.IV.fromLength(16);
+    final encrypter = encrypt.Encrypter(encrypt.AES(passwordKey));
+    final encrypted = encrypter.encrypt(string, iv: passwordIv);
     print("Encrypted: ${encrypted.base64}");
     decryptPassword(encrypted.base64);
-}
+  }
 
   void decryptPassword(String encrypted) {
-    final encrypter = encrypt.Encrypter(encrypt.AES(key));
-    final decrypted = encrypter.decrypt64(encrypted, iv: iv);
+    final encrypter = encrypt.Encrypter(encrypt.AES(passwordKey));
+    final decrypted = encrypter.decrypt64(encrypted, iv: passwordIv);
     print("Decrypted: $decrypted");
+  }
+
+  void encryptFile(File file, Uint8List inputBytes) async {
+    // Implement file encryption logic here
+    fileKey = encrypt.Key.fromSecureRandom(32);
+    fileIv = encrypt.IV.fromLength(16);
+    final encrypter = encrypt.Encrypter(encrypt.AES(fileKey));
+    final encrypted = encrypter.encryptBytes(inputBytes, iv: fileIv);
+    final encryptedFile = File('${file.path}.enc');
+    await encryptedFile.writeAsBytes(encrypted.bytes);
+    final keyFile = File('${file.path}.key');
+    await keyFile.writeAsString('${fileKey.base64}:${fileIv.base64}');
+  }
+
+  void decryptFile(File file) async {
+    // Implement file decryption logic here
+    final keyFile = File(file.path.replaceAll('.enc', '.key'));
+    final keyData = await keyFile.readAsString();
+    final parts = keyData.split(':');
+    fileKey = encrypt.Key.fromBase64(parts[0]);
+    fileIv = encrypt.IV.fromBase64(parts[1]);
+    final encryptedBytes = await file.readAsBytes();
+    final encrypter = encrypt.Encrypter(encrypt.AES(fileKey));
+    final decrypted =
+        encrypter.decryptBytes(encrypt.Encrypted(encryptedBytes), iv: fileIv);
+    final decryptedFile = File(file.path.replaceAll('.enc', '.dec'));
+    await decryptedFile.writeAsBytes(decrypted);
   }
 
   @override
@@ -82,7 +116,6 @@ class _MyHomePageState extends State<MyHomePage> {
     passwordController.dispose();
     super.dispose();
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -121,6 +154,20 @@ class _MyHomePageState extends State<MyHomePage> {
           // wireframe for each widget.
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
+            ElevatedButton(
+              onPressed: () async {
+                FilePickerResult? result =
+                    await FilePicker.platform.pickFiles();
+                if (result != null) {
+                  File file = File(result.files.single.path!);
+                  final inputBytes = await file.readAsBytes();
+                  encryptFile(file, inputBytes);
+                } else {
+                  // User canceled the picker
+                }
+              },
+              child: const Text('Encrypt File'),
+            ),
             TextField(
               controller: passwordController,
               decoration: const InputDecoration(
@@ -137,13 +184,21 @@ class _MyHomePageState extends State<MyHomePage> {
               },
               child: const Text('Submit'),
             ),
+            ElevatedButton(
+                onPressed: () async {
+                  FilePickerResult? result =
+                      await FilePicker.platform.pickFiles();
+                  if (result != null) {
+                    File file = File(result.files.single.path!);
+                    decryptFile(file);
+                  } else {
+                    // User canceled the picker
+                  }
+                },
+                child: const Text('Decrypt File'))
           ],
         ),
       ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
-  
- 
 }
-
-
