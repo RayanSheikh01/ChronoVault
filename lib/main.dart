@@ -10,6 +10,7 @@ import 'package:pointycastle/export.dart' as pce;
 import 'package:pointycastle/impl.dart';
 import 'package:pointycastle/pointycastle.dart' as pc;
 import 'dart:io';
+import 'package:basic_utils/basic_utils.dart' as p;
 
 void main() {
   runApp(const MyApp());
@@ -69,8 +70,10 @@ class _MyHomePageState extends State<MyHomePage> {
   final passwordController = TextEditingController();
   late encrypt.Key passwordKey;
   late encrypt.IV passwordIv;
-  late encrypt.Key fileKey;
+  late encrypt.Key fileAESKey;
   late encrypt.IV fileIv;
+  late String fileRSAKey;
+  late pc.RSAPrivateKey privateKey;
 
   void encryptPassword() {
     final string = passwordController.text;
@@ -121,14 +124,36 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void encryptFile(File file, Uint8List inputBytes) async {
     // Implement file encryption logic here
-    fileKey = encrypt.Key.fromSecureRandom(32);
+    fileAESKey = encrypt.Key.fromSecureRandom(32);
     fileIv = encrypt.IV.fromLength(16);
-    final encrypter = encrypt.Encrypter(encrypt.AES(fileKey));
+    final encrypter = encrypt.Encrypter(encrypt.AES(fileAESKey));
     final encrypted = encrypter.encryptBytes(inputBytes, iv: fileIv);
+
+    // RSA Key Generation
+    final secureRandom = pc.SecureRandom('Fortuna')
+      ..seed(pce.KeyParameter(Uint8List.fromList(
+          List.generate(32, (_) => Random.secure().nextInt(256)))));
+    final keyGen = pce.RSAKeyGenerator();
+    keyGen.init(pc.ParametersWithRandom(
+        pc.RSAKeyGeneratorParameters(BigInt.parse('65537'), 2048, 12),
+        secureRandom));
+
+    final pair = keyGen.generateKeyPair();
+    final myPublic = pair.publicKey as pc.RSAPublicKey;
+    final myPrivate = pair.privateKey as pc.RSAPrivateKey;
+    final rsaEncrypter = encrypt.Encrypter(encrypt.RSA(
+        publicKey: myPublic,
+        encoding: encrypt.RSAEncoding.OAEP,
+        digest: encrypt.RSADigest.SHA256));
+    final encryptedKey = rsaEncrypter.encryptBytes(fileAESKey.bytes);
+    print("Encrypted File Key: ${encryptedKey.base64}");
+
+    final privatePem = p.CryptoUtils.encodeRSAPrivateKeyToPem(myPrivate);
     final encryptedFile = File('${file.path}.enc');
     await encryptedFile.writeAsBytes(encrypted.bytes);
     final keyFile = File('${file.path}.key');
-    await keyFile.writeAsString('${fileKey.base64}:${fileIv.base64}');
+    await keyFile
+        .writeAsString('${encryptedKey.base64}:${fileIv.base64}:${privatePem}');
   }
 
   void decryptFile(File file) async {
@@ -136,14 +161,28 @@ class _MyHomePageState extends State<MyHomePage> {
     final keyFile = File(file.path.replaceAll('.enc', '.key'));
     final keyData = await keyFile.readAsString();
     final parts = keyData.split(':');
-    fileKey = encrypt.Key.fromBase64(parts[0]);
+    fileRSAKey = parts[0];
     fileIv = encrypt.IV.fromBase64(parts[1]);
+    final privateKey = parts.sublist(2).join(':');
+    final parsedPrivateKey = p.CryptoUtils.rsaPrivateKeyFromPem(privateKey);
+
+    // Decrypt the file key using RSA private key
+    final rsaDecrypter = encrypt.Encrypter(encrypt.RSA(
+        privateKey: parsedPrivateKey,
+        encoding: encrypt.RSAEncoding.OAEP,
+        digest: encrypt.RSADigest.SHA256)); // Ensure the digest matches
+
+    final decryptedAesKeyBytes =
+        rsaDecrypter.decryptBytes(encrypt.Encrypted.fromBase64(fileRSAKey));
+
+    final aesKey = encrypt.Key(Uint8List.fromList(decryptedAesKeyBytes));
+
     final encryptedBytes = await file.readAsBytes();
-    final encrypter = encrypt.Encrypter(encrypt.AES(fileKey));
-    final decrypted =
+    final encrypter = encrypt.Encrypter(encrypt.AES(aesKey));
+    final decryptedBytes =
         encrypter.decryptBytes(encrypt.Encrypted(encryptedBytes), iv: fileIv);
     final decryptedFile = File(file.path.replaceAll('.enc', '.dec'));
-    await decryptedFile.writeAsBytes(decrypted);
+    await decryptedFile.writeAsBytes(decryptedBytes);
   }
 
   @override
