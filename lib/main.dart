@@ -1,9 +1,14 @@
 // Removed incorrect import
+import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
+import 'package:pointycastle/export.dart' as pce;
+import 'package:pointycastle/impl.dart';
+import 'package:pointycastle/pointycastle.dart' as pc;
 import 'dart:io';
 
 void main() {
@@ -73,14 +78,45 @@ class _MyHomePageState extends State<MyHomePage> {
     passwordIv = encrypt.IV.fromLength(16);
     final encrypter = encrypt.Encrypter(encrypt.AES(passwordKey));
     final encrypted = encrypter.encrypt(string, iv: passwordIv);
-    print("Encrypted: ${encrypted.base64}");
-    decryptPassword(encrypted.base64);
+
+    // RSA Key Generation
+    final secureRandom = pc.SecureRandom('Fortuna')
+      ..seed(pce.KeyParameter(Uint8List.fromList(
+          List.generate(32, (_) => Random.secure().nextInt(256)))));
+    final keyGen = pce.RSAKeyGenerator();
+    keyGen.init(pc.ParametersWithRandom(
+        pc.RSAKeyGeneratorParameters(BigInt.parse('65537'), 2048, 12),
+        secureRandom));
+
+    final pair = keyGen.generateKeyPair();
+    final myPublic = pair.publicKey as pc.RSAPublicKey;
+    final myPrivate = pair.privateKey as pc.RSAPrivateKey;
+
+    // encrypt the password key with the RSA public key
+    final rsaEncrypter = encrypt.Encrypter(encrypt.RSA(
+        publicKey: myPublic,
+        encoding: encrypt.RSAEncoding.OAEP,
+        digest: encrypt.RSADigest.SHA256));
+    final encryptedKey = rsaEncrypter.encryptBytes(passwordKey.bytes);
+
+    decryptPassword(encryptedKey.base64, encrypted.base64, myPrivate);
   }
 
-  void decryptPassword(String encrypted) {
-    final encrypter = encrypt.Encrypter(encrypt.AES(passwordKey));
-    final decrypted = encrypter.decrypt64(encrypted, iv: passwordIv);
-    print("Decrypted: $decrypted");
+  void decryptPassword(
+      String encryptedKey, String ciphertext, RSAPrivateKey privateKey) {
+    final rsaDecrypter = encrypt.Encrypter(encrypt.RSA(
+        privateKey: privateKey,
+        encoding: encrypt.RSAEncoding.OAEP,
+        digest: encrypt.RSADigest.SHA256)); // Ensure the digest matches
+    final rsaEncrypted = encrypt.Encrypted.fromBase64(encryptedKey);
+    final decryptedAesKeyBytes = rsaDecrypter.decryptBytes(rsaEncrypted);
+
+    final aesKey = encrypt.Key(Uint8List.fromList(decryptedAesKeyBytes));
+
+    final aesEncrypter = encrypt.Encrypter(encrypt.AES(aesKey));
+    final decryptedPassword = aesEncrypter
+        .decrypt(encrypt.Encrypted.fromBase64(ciphertext), iv: passwordIv);
+    print("Decrypted Password: $decryptedPassword");
   }
 
   void encryptFile(File file, Uint8List inputBytes) async {
