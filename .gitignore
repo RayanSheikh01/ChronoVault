@@ -1,0 +1,29 @@
+# Flutter/Dart
+chronovault/build/
+chronovault/.flutter-plugins
+chronovault/.packages
+chronovault/pubspec.lock
+.idea/
+*.iml
+.DS_Store
+
+
+# Flutter/Dart
+chronovault_app/build/
+chronovault_app/.flutter-plugins
+chronovault_app/.packages
+chronovault_app/pubspec.lock
+.idea/
+*.iml
+.DS_Store
+
+# Solidity
+chronovault_contracts/node_modules/
+chronovault_contracts/cache/
+chronovault_contracts/artifacts/
+
+
+# Solidity
+contracts/node_modules/
+contracts/cache/
+contracts/artifacts/
